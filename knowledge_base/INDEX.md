@@ -43,12 +43,29 @@ This system is engineered specifically to enable high-throughput, *ab initio* no
 
 6. **[06. Benchmarking, Testing & Verification Plan](06_benchmarking_and_validation.md)**
    - Verification hierarchy: finite-difference gradients & couplings vs analytical implementations.
-   - Cross-package validation against CPU PySCF (`pyscf.nac.sacasscf`), OpenMolcas, and BAGEL.
+   - Cross-package validation against CPU PySCF (`pyscf.nac.sacasscf`), OpenMolcas, and BAGEL (`ethylene_bagel.json`).
    - Target benchmark photochemical systems (ethylene torsion, fulvene S1/S0 decay, retinal chromophore minimal model).
+   - Decoupled Slurm HPC cluster execution scripts (`submit_sa_casscf.sh`, `submit_bagel_ethylene.sh`).
 
 7. **[07. Annotated Literature Bibliography](07_annotated_bibliography.md)**
    - Comprehensive citations, abstracts, and key algorithmic insights from foundational literature (Snyder, Martínez, Shiozaki, Park, Granovsky, Werner, Celani, Tully, Subotnik).
    - Machine-readable BibTeX database: **[`references.bib`](references.bib)**.
+
+8. **[08. Codebase Gap Analysis & Phase 1 Implementation Plan](08_codebase_gap_analysis_and_phase1_plan.md)**
+   - Audited inventory of current `gpu4pyscf` capabilities on `feature/gpu-cas-extensions`.
+   - Detailed component-by-component gap analysis (FCI, MCSCF, Gradients, NAC, CASPT2, FSSH).
+   - **Phase 1 Completion Report:** Full production delivery of State-Averaged CASSCF (`gpu4pyscf.mcscf`), GPU transition RDMs (`gpu4pyscf.fci`), BAGEL benchmark inputs, and decoupled cluster execution scripts.
+
+---
+
+### Implementation Roadmap & Status Summary
+
+| Phase | Target Capabilities | Status | Key Deliverables |
+| :--- | :--- | :--- | :--- |
+| **Phase 1** | **State-Averaged CASSCF, GPU Transition RDMs, BAGEL Benchmark & Standalone Runners** | **COMPLETED** | `gpu4pyscf.mcscf.addons`, `df.py`, `direct_spin1.trans_rdm12`, `run_sa_casscf.py`, `ethylene_bagel.json` |
+| **Phase 2** | State-Specific Analytical Gradients & Analytical NACVs via CP-MCSCF / Z-Vector | Planned | `gpu4pyscf.grad.sacasscf`, `gpu4pyscf.nac.sacasscf`, GPU Krylov response solver |
+| **Phase 3** | Extended Multi-State CASPT2 (XMS-CASPT2) Dynamic Correlation | Planned | `gpu4pyscf.caspt2.xms_caspt2`, model-space Fock, 8 excitation manifolds, imaginary shifts |
+| **Phase 4** | GPU Non-Adiabatic Molecular Dynamics (NAMD) & MECI Optimization | Planned | `gpu4pyscf.md.fssh_casscf`, `fssh_caspt2`, wave function phase tracking, branching-space MECI |
 
 ---
 

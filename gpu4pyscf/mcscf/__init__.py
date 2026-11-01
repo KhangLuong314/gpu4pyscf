@@ -13,3 +13,5 @@
 # limitations under the License.
 
 from .df import DFCASCI, DFCASSCF
+from .addons import StateAverageMCSCF, state_average, state_average_
+

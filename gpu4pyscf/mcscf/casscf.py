@@ -250,6 +250,12 @@ class _CASSCF(cpu_mc1step.CASSCF):
         self.fcisolver = fcisolver
         self.canonicalization = False
 
+    @property
+    def casdm1(self):
+        if getattr(self, 'ci', None) is not None:
+            return self.fcisolver.make_rdm1(self.ci, self.ncas, self.nelecas)
+        return None
+
     def ao2mo(self, mo_coeff=None, hcore=None):
         raise NotImplementedError('CASSCF integral backend is not configured')
 

@@ -719,6 +719,9 @@ def _create_pair_recontractor(mol, int3c2e_context):
     nao = int(ao_loc[-1])
     pair_addresses = np.empty(nao**2, dtype=np.int32)
     offset = 0
+    has_new_recontract_abi = hasattr(libvhf_rys, 'recontract_ao_pair_gather')
+    if not has_new_recontract_abi:
+        output_lut = np.full((nao, nao), -1, dtype=np.int32)
     for batch_id, bas_ij_idx in enumerate(bas_ij_batches):
         bas_ij_idx = cp.asnumpy(bas_ij_idx)
         i, j = divmod(bas_ij_idx, nbas_sorted)
@@ -731,14 +734,24 @@ def _create_pair_recontractor(mol, int3c2e_context):
         out_idx = np.empty(size, dtype=np.int32)
         coef = np.empty(size, dtype=np.float64)
         count = ctypes.c_int(0)
-        cderi_npairs = libvhf_rys.pair_recontraction_info(
-            inp_idx.ctypes, out_idx.ctypes, coef.ctypes, ctypes.byref(count),
-            pair_addresses[offset:].ctypes,
-            bas_ij_idx.ctypes, ctypes.c_int(len(bas_ij_idx)),
-            orig_shell_for_sorted_bas.ctypes, prim_id_within_shell.ctypes,
-            recontract_bas.ctypes, recontract_coef.ctypes,
-            ao_loc.ctypes,
-            ctypes.c_int(nbas_sorted), ctypes.c_int(nao), ctypes.c_int(cart))
+        if has_new_recontract_abi:
+            cderi_npairs = libvhf_rys.pair_recontraction_info(
+                inp_idx.ctypes, out_idx.ctypes, coef.ctypes, ctypes.byref(count),
+                pair_addresses[offset:].ctypes,
+                bas_ij_idx.ctypes, ctypes.c_int(len(bas_ij_idx)),
+                orig_shell_for_sorted_bas.ctypes, prim_id_within_shell.ctypes,
+                recontract_bas.ctypes, recontract_coef.ctypes,
+                ao_loc.ctypes,
+                ctypes.c_int(nbas_sorted), ctypes.c_int(nao), ctypes.c_int(cart))
+        else:
+            cderi_npairs = libvhf_rys.pair_recontraction_info(
+                inp_idx.ctypes, out_idx.ctypes, coef.ctypes, ctypes.byref(count),
+                pair_addresses[offset:].ctypes, output_lut.ctypes,
+                bas_ij_idx.ctypes, ctypes.c_int(len(bas_ij_idx)),
+                orig_shell_for_sorted_bas.ctypes, prim_id_within_shell.ctypes,
+                recontract_bas.ctypes, recontract_coef.ctypes,
+                ao_loc.ctypes,
+                ctypes.c_int(nbas_sorted), ctypes.c_int(nao))
         count = count.value
         ao_pair_counts.append(count)
         contracted_ao_pair_counts.append(cderi_npairs)

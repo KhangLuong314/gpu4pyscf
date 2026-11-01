@@ -55,7 +55,10 @@ libpbc.bvk_ovlp_img_idx.restype = ctypes.c_int
 libpbc.PBCsr_int3c2e_latsum23.restype = ctypes.c_int
 libpbc.PBCcontract_int3c2e_dm.restype = ctypes.c_int
 libpbc.PBCcontract_int3c2e_auxvec.restype = ctypes.c_int
-libpbc.PBCpair_recontraction_info.restype = ctypes.c_int
+try:
+    libpbc.PBCpair_recontraction_info.restype = ctypes.c_int
+except AttributeError:
+    pass
 
 LMAX = 4
 L_AUX_MAX = 6

@@ -17,6 +17,7 @@ import numpy
 from pyscf import mcscf as cpu_mcscf
 from pyscf.fci.addons import SpinPenaltyFCISolver
 from pyscf.mcscf import mc1step as cpu_mc1step
+from pyscf.mcscf.addons import StateAverageMCSCFSolver
 
 from gpu4pyscf.df import df as gpu_df
 from gpu4pyscf.lib import logger
@@ -77,7 +78,27 @@ class _DFCAS:
             out = cpu_mcscf.DFCASCI(
                 self._scf.to_cpu(), self.ncas, self.nelecas,
                 auxbasis=self.with_df.auxbasis, ncore=self.ncore)
-        return utils.to_cpu(self, out=out)
+        if isinstance(self, StateAverageMCSCFSolver):
+            out = cpu_mcscf.addons.state_average_(out, weights=self.weights)
+        out = utils.to_cpu(self, out=out)
+        if isinstance(getattr(out, 'ci', None), (list, tuple)):
+            out.ci = [c.get() if hasattr(c, 'get') else numpy.asarray(c) for c in out.ci]
+        elif hasattr(getattr(out, 'ci', None), 'get'):
+            out.ci = out.ci.get()
+        if hasattr(out, 'fcisolver'):
+            if isinstance(getattr(out.fcisolver, 'ci', None), (list, tuple)):
+                out.fcisolver.ci = [c.get() if hasattr(c, 'get') else numpy.asarray(c) for c in out.fcisolver.ci]
+            elif hasattr(getattr(out.fcisolver, 'ci', None), 'get'):
+                out.fcisolver.ci = out.fcisolver.ci.get()
+        return out
+
+    def state_average_(self, weights=(0.5, 0.5), wfnsym=None):
+        from gpu4pyscf.mcscf import addons
+        return addons.state_average_(self, weights, wfnsym)
+
+    def state_average(self, weights=(0.5, 0.5), wfnsym=None):
+        from gpu4pyscf.mcscf import addons
+        return addons.state_average(self, weights, wfnsym)
 
 
 class DFCASCI(_DFCAS, _CASCI):
@@ -112,10 +133,25 @@ def from_cpu(mc):
     cls = DFCASSCF if isinstance(mc, cpu_mc1step.CASSCF) else DFCASCI
     out = cls(mc._scf, mc.ncas, mc.nelecas,
               auxbasis=mc.with_df.auxbasis, ncore=mc.ncore)
+    if isinstance(mc, (StateAverageMCSCFSolver, cpu_mcscf.addons.StateAverageMCSCFSolver)):
+        from gpu4pyscf.mcscf import addons
+        out = addons.state_average_(out, weights=mc.weights)
     for key, value in mc.__dict__.items():
         if key not in ('_scf', 'with_df', 'fcisolver'):
             if isinstance(value, numpy.ndarray):
                 value = cupy.asarray(value)
+            elif isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], numpy.ndarray):
+                value = [cupy.asarray(v) for v in value]
             out.__dict__[key] = value
     out.fcisolver.__dict__.update(mc.fcisolver.__dict__)
+    if hasattr(out.fcisolver, '_converged') and 'converged' in mc.fcisolver.__dict__:
+        out.fcisolver._converged = mc.fcisolver.__dict__['converged']
+    if isinstance(getattr(out.fcisolver, 'ci', None), (list, tuple)):
+        out.fcisolver.ci = [cupy.asarray(c) for c in out.fcisolver.ci]
+    elif isinstance(getattr(out.fcisolver, 'ci', None), numpy.ndarray):
+        out.fcisolver.ci = cupy.asarray(out.fcisolver.ci)
+    if isinstance(getattr(out, 'ci', None), (list, tuple)):
+        out.ci = [cupy.asarray(c) for c in out.ci]
+    elif isinstance(getattr(out, 'ci', None), numpy.ndarray):
+        out.ci = cupy.asarray(out.ci)
     return out

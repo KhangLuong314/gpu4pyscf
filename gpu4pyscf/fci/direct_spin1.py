@@ -197,6 +197,9 @@ def _prepare_link_index(link_index, norb):
 
 
 def _prepare_rdm_link_index(link_index, norb, nelec):
+    if link_index is not None and len(link_index) == 4 and isinstance(link_index[0], cp.ndarray):
+        return link_index
+
     if link_index is None:
         neleca, nelecb = direct_spin1._unpack_nelec(nelec)
         link_indexa = cistring.gen_linkstr_index(range(norb), neleca)
@@ -264,21 +267,32 @@ def contract_2e(eri, ci0, norb, nelec, link_index=None):
     return out[0] if single_vector else out.reshape(input_shape)
 
 
-def make_rdm12(fcivec, norb, nelec, link_index=None, reorder=True):
+def trans_rdm1(cibra, ciket, norb, nelec, link_index=None):
+    r'''Spin traced transition 1-particle density matrix.
+
+    dm1[p, q] = < cibra | q^\dagger p | ciket >
+    '''
     nelec = direct_spin1._unpack_nelec(nelec)
     neleca, nelecb = nelec
     na = lib.comb(norb, neleca)
     nb = lib.comb(norb, nelecb)
-    fcivec = cp.asarray(fcivec, dtype=cp.float64, order='C')
-    if fcivec.size != na * nb:
-        raise ValueError(f'Invalid CI size {fcivec.size}; expected {na * nb}')
-    fcivec = fcivec.reshape(na, nb)
+    is_diag = (cibra is ciket)
+    cibra = cp.asarray(cibra, dtype=cp.float64, order='C')
+    if is_diag:
+        ciket = cibra
+    else:
+        ciket = cp.asarray(ciket, dtype=cp.float64, order='C')
+    if cibra.size != na * nb:
+        raise ValueError(f'Invalid cibra size {cibra.size}; expected {na * nb}')
+    if ciket.size != na * nb:
+        raise ValueError(f'Invalid ciket size {ciket.size}; expected {na * nb}')
+    cibra = cibra.reshape(na, nb)
+    ciket = ciket.reshape(na, nb)
 
     gpu_link_index = _prepare_rdm_link_index(link_index, norb, nelec)
     addra, signa, addrb, signb = gpu_link_index
     nnorb = norb * norb
     dm1 = cp.zeros(nnorb, dtype=cp.float64)
-    dm2 = cp.zeros((nnorb, nnorb), dtype=cp.float64)
     t1 = cp.empty((nnorb, na * TILE), dtype=cp.float64)
     ci_tile = cp.zeros((na, TILE), dtype=cp.float64)
     threads = (TILE, TILE)
@@ -286,12 +300,68 @@ def make_rdm12(fcivec, norb, nelec, link_index=None, reorder=True):
     rest_args = (na, nb, nnorb, addra, addrb, signa, signb)
 
     for strb0 in range(0, nb, TILE):
-        _build_t1(blocks, threads, (fcivec, t1, strb0) + rest_args)
+        _build_t1(blocks, threads, (ciket, t1, strb0) + rest_args)
         blen = min(TILE, nb - strb0)
         ci_tile.fill(0.)
-        ci_tile[:, :blen] = fcivec[:, strb0:strb0 + blen]
+        ci_tile[:, :blen] = cibra[:, strb0:strb0 + blen]
         dm1 += cp.dot(t1, ci_tile.ravel())
-        dm2 += cp.dot(t1, t1.T)
+
+    dm1 = dm1.reshape(norb, norb).T
+    return dm1
+
+
+def trans_rdm12(cibra, ciket, norb, nelec, link_index=None, reorder=True):
+    r'''Spin traced transition 1- and 2-particle density matrices.
+
+    dm1[p, q] = < cibra | q^\dagger p | ciket >
+    dm2[p, q, r, s] = < cibra | p^\dagger r^\dagger s q | ciket >
+    '''
+    nelec = direct_spin1._unpack_nelec(nelec)
+    neleca, nelecb = nelec
+    na = lib.comb(norb, neleca)
+    nb = lib.comb(norb, nelecb)
+    is_diag = (cibra is ciket)
+    cibra = cp.asarray(cibra, dtype=cp.float64, order='C')
+    if is_diag:
+        ciket = cibra
+    else:
+        ciket = cp.asarray(ciket, dtype=cp.float64, order='C')
+    if cibra.size != na * nb:
+        raise ValueError(f'Invalid cibra size {cibra.size}; expected {na * nb}')
+    if ciket.size != na * nb:
+        raise ValueError(f'Invalid ciket size {ciket.size}; expected {na * nb}')
+    cibra = cibra.reshape(na, nb)
+    ciket = ciket.reshape(na, nb)
+
+    gpu_link_index = _prepare_rdm_link_index(link_index, norb, nelec)
+    addra, signa, addrb, signb = gpu_link_index
+    nnorb = norb * norb
+    dm1 = cp.zeros(nnorb, dtype=cp.float64)
+    dm2 = cp.zeros((nnorb, nnorb), dtype=cp.float64)
+    t1_ket = cp.empty((nnorb, na * TILE), dtype=cp.float64)
+    ci_tile_bra = cp.zeros((na, TILE), dtype=cp.float64)
+    threads = (TILE, TILE)
+    blocks = (1, (na + threads[1] - 1) // threads[1])
+    rest_args = (na, nb, nnorb, addra, addrb, signa, signb)
+
+    if is_diag:
+        for strb0 in range(0, nb, TILE):
+            _build_t1(blocks, threads, (ciket, t1_ket, strb0) + rest_args)
+            blen = min(TILE, nb - strb0)
+            ci_tile_bra.fill(0.)
+            ci_tile_bra[:, :blen] = ciket[:, strb0:strb0 + blen]
+            dm1 += cp.dot(t1_ket, ci_tile_bra.ravel())
+            dm2 += cp.dot(t1_ket, t1_ket.T)
+    else:
+        t1_bra = cp.empty((nnorb, na * TILE), dtype=cp.float64)
+        for strb0 in range(0, nb, TILE):
+            _build_t1(blocks, threads, (ciket, t1_ket, strb0) + rest_args)
+            _build_t1(blocks, threads, (cibra, t1_bra, strb0) + rest_args)
+            blen = min(TILE, nb - strb0)
+            ci_tile_bra.fill(0.)
+            ci_tile_bra[:, :blen] = cibra[:, strb0:strb0 + blen]
+            dm1 += cp.dot(t1_ket, ci_tile_bra.ravel())
+            dm2 += cp.dot(t1_bra, t1_ket.T)
 
     dm1 = dm1.reshape(norb, norb).T
     dm2 = dm2.reshape(norb, norb, norb, norb).transpose(1, 0, 2, 3)
@@ -302,6 +372,14 @@ def make_rdm12(fcivec, norb, nelec, link_index=None, reorder=True):
         dm2 = (dm2 + dm2.T) * .5
         dm2 = dm2.reshape(norb, norb, norb, norb)
     return dm1, dm2
+
+
+def make_rdm1(fcivec, norb, nelec, link_index=None):
+    return trans_rdm1(fcivec, fcivec, norb, nelec, link_index)
+
+
+def make_rdm12(fcivec, norb, nelec, link_index=None, reorder=True):
+    return trans_rdm12(fcivec, fcivec, norb, nelec, link_index, reorder)
 
 
 def _qr(vectors, lindep):
@@ -553,11 +631,28 @@ class FCISolver(direct_spin1.FCISolver):
     def make_rdm1s(self, fcivec, norb, nelec, link_index=None):
         return super().make_rdm1s(cp.asnumpy(fcivec), norb, nelec, link_index)
 
-    def make_rdm1(self, fcivec, norb, nelec, link_index=None):
-        return super().make_rdm1(cp.asnumpy(fcivec), norb, nelec, link_index)
+    def trans_rdm1(self, cibra, ciket, norb=None, nelec=None, link_index=None):
+        if norb is None: norb = self.norb
+        if nelec is None: nelec = self.nelec
+        dm1 = trans_rdm1(cibra, ciket, norb, nelec, link_index)
+        return cp.asnumpy(dm1)
 
-    def make_rdm12(self, fcivec, norb, nelec, link_index=None, reorder=True):
-        dm1, dm2 = make_rdm12(fcivec, norb, nelec, link_index, reorder)
+    def trans_rdm12(self, cibra, ciket, norb=None, nelec=None, link_index=None, reorder=True):
+        if norb is None: norb = self.norb
+        if nelec is None: nelec = self.nelec
+        dm1, dm2 = trans_rdm12(cibra, ciket, norb, nelec, link_index, reorder)
+        return cp.asnumpy(dm1), cp.asnumpy(dm2)
+
+    def make_rdm1(self, fcivec, norb=None, nelec=None, link_index=None):
+        if norb is None: norb = self.norb
+        if nelec is None: nelec = self.nelec
+        dm1 = trans_rdm1(fcivec, fcivec, norb, nelec, link_index)
+        return cp.asnumpy(dm1)
+
+    def make_rdm12(self, fcivec, norb=None, nelec=None, link_index=None, reorder=True):
+        if norb is None: norb = self.norb
+        if nelec is None: nelec = self.nelec
+        dm1, dm2 = trans_rdm12(fcivec, fcivec, norb, nelec, link_index, reorder)
         return cp.asnumpy(dm1), cp.asnumpy(dm2)
 
 
