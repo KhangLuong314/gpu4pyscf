@@ -7,3 +7,6 @@ from . import tdrhf
 from . import tdrks
 from . import tduhf
 from . import tduks
+from . import sacasscf
+from gpu4pyscf.grad.sacasscf import Gradients as SACASSCF
+

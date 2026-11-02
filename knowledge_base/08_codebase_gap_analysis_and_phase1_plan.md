@@ -249,5 +249,52 @@ Phase 1 of the GPU-accelerated multireference & excited-state framework is fully
 | Decoupled Slurm Scripts | `submit_sa_casscf.sh`, `submit_bagel_ethylene.sh` | **COMPLETED** | Tailored to Centurion cluster partitions |
 | Knowledge Base Sync | `knowledge_base/` modules | **COMPLETED** | Architecture, gap analysis, status updates |
 
+---
+
+## 5. Phase 2 Implementation Delivery: Analytical Gradients & NACVs on GPU
+
+Phase 2 implementation is completed and ready for cluster execution and benchmarking. The delivery covers:
+
+### 5.1 Subsystem Architecture & Modules
+1. **GPU SA-CASSCF Analytical Nuclear Gradients (`gpu4pyscf.grad.sacasscf`):**
+   - Implemented `Gradients` class supporting both state-averaged ensemble gradients ($\nabla_{\mathbf{R}} E_{\text{SA}}$) and state-specific excited-state gradients ($\nabla_{\mathbf{R}} E_I$).
+   - Implemented GPU-resident CP-MCSCF linear response solver (`solve_cpmcscf`):
+     $$\mathbf{A}^{\text{SA}} \mathbf{z} = -\mathbf{g}^I + \sum_{K \ne I} \frac{2}{E_I - E_K} \mathbf{L}^{IK}$$
+     incorporating both orbital relaxation and CI transition response couplings.
+   - Formulates relaxed effective 1-RDM ($P^{\text{eff}}$), 2-RDM, and energy-weighted density matrix ($W^{\text{eff}}$) on GPU.
+   - Contracts with 1-electron ($\nabla h$, $\nabla S$) and density-fitting 3-center 2-electron integral derivatives.
+   - Provides `as_scanner()` for geometry optimization and potential energy surface exploration.
+
+2. **GPU Analytical Non-Adiabatic Coupling Vectors (`gpu4pyscf.nac.sacasscf`):**
+   - Implemented `NonAdiabaticCoupling` and `NonAdiabaticCouplings` classes.
+   - Directly contracts active transition 1-RDM and 2-RDM evaluated on GPU via `trans_rdm12`.
+   - Incorporates basis-set CSF derivative term:
+     $$\mathbf{d}_{IJ}^{\text{CSF}} = \frac{1}{2} \sum_{\mu\nu} (\nabla_{\mathbf{R}} S_{\mu\nu}) \mathbf{C}_{\text{act}} (\gamma^{IJ} - (\gamma^{IJ})^T) \mathbf{C}_{\text{act}}^T$$
+   - Configurable Electron Translation Factors (`use_etfs=True`, default), cancelling the CSF term for Galilean-invariant NAMD.
+   - Configurable energy-difference scaling (`mult_ediff=True`) to return the non-divergent coupling vector $\mathbf{h}_{IJ} = (E_J - E_I) \mathbf{d}_{IJ}$ at conical intersections.
+   - Z-vector response solve for transition orbital gradient $\mathbf{L}^{IJ}$.
+
+3. **MCSCF Class Integration:**
+   - Bound `StateAverageMCSCF.nuc_grad_method()` and `.Gradients()` to `gpu4pyscf.grad.sacasscf.Gradients`.
+   - Bound `StateAverageMCSCF.nac_method()` and `.NACGradients()` to `gpu4pyscf.nac.sacasscf.NonAdiabaticCoupling`.
+
+4. **Standalone Benchmarking & HPC Verification Suite:**
+   - `gpu4pyscf/grad/tests/test_sa_grad.py`: Regression testing analytical gradients against centered finite differences.
+   - `gpu4pyscf/nac/tests/test_sa_nac.py`: Testing NACV anti-symmetry ($\mathbf{d}_{JI} = -\mathbf{d}_{IJ}$), diagonal vanishing ($\mathbf{d}_{II} = \mathbf{0}$), and energy-difference scaling.
+   - `run_sa_grad_nac.py` & `submit_sa_grad_nac.sh`: Production benchmark driver and Slurm launcher targeting the Centurion NVIDIA L40S GPU cluster partition.
+
+### 5.2 Phase 2 Deliverables Summary Table
+
+| Deliverable | Primary File(s) | Status | Test / Verification Target |
+|---|---|---|---|
+| SA-CASSCF Gradient Engine | `gpu4pyscf/grad/sacasscf.py` | **IMPLEMENTED** | `test_sa_grad.py` vs finite difference |
+| GPU CP-MCSCF Z-Vector Solver | `gpu4pyscf/grad/sacasscf.py:solve_cpmcscf` | **IMPLEMENTED** | Linear response convergence & orbital relaxation |
+| Analytical NACV Engine | `gpu4pyscf/nac/sacasscf.py` | **IMPLEMENTED** | `test_sa_nac.py` (anti-symmetry, ETFs, ΔE scaling) |
+| MCSCF Method Hooks | `gpu4pyscf/mcscf/addons.py` | **IMPLEMENTED** | `mc.nuc_grad_method()`, `mc.NACGradients()` |
+| HPC Execution Script | `run_sa_grad_nac.py` | **IMPLEMENTED** | Standalone multi-root gradient & NACV benchmark |
+| Slurm Batch Launcher | `submit_sa_grad_nac.sh` | **IMPLEMENTED** | L40S GPU batch partition on Centurion |
+| Knowledge Base Curation | `knowledge_base/` modules | **SYNCHRONIZED** | Theory, software architecture, verification plan |
+
+
 
 

@@ -63,7 +63,7 @@ This system is engineered specifically to enable high-throughput, *ab initio* no
 | Phase | Target Capabilities | Status | Key Deliverables |
 | :--- | :--- | :--- | :--- |
 | **Phase 1** | **State-Averaged CASSCF, GPU Transition RDMs, BAGEL Benchmark & Standalone Runners** | **COMPLETED** | `gpu4pyscf.mcscf.addons`, `df.py`, `direct_spin1.trans_rdm12`, `run_sa_casscf.py`, `ethylene_bagel.json` |
-| **Phase 2** | State-Specific Analytical Gradients & Analytical NACVs via CP-MCSCF / Z-Vector | Planned | `gpu4pyscf.grad.sacasscf`, `gpu4pyscf.nac.sacasscf`, GPU Krylov response solver |
+| **Phase 2** | **State-Specific Analytical Gradients & Analytical NACVs via CP-MCSCF / Z-Vector** | **IMPLEMENTED** | `gpu4pyscf.grad.sacasscf`, `gpu4pyscf.nac.sacasscf`, `run_sa_grad_nac.py`, `submit_sa_grad_nac.sh` |
 | **Phase 3** | Extended Multi-State CASPT2 (XMS-CASPT2) Dynamic Correlation | Planned | `gpu4pyscf.caspt2.xms_caspt2`, model-space Fock, 8 excitation manifolds, imaginary shifts |
 | **Phase 4** | GPU Non-Adiabatic Molecular Dynamics (NAMD) & MECI Optimization | Planned | `gpu4pyscf.md.fssh_casscf`, `fssh_caspt2`, wave function phase tracking, branching-space MECI |
 

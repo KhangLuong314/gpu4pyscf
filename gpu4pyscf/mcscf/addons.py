@@ -360,26 +360,20 @@ class StateAverageMCSCF(StateAverageMCSCFSolver):
             return self
 
     def nuc_grad_method(self, state=None):
-        if state is not None:
-            raise NotImplementedError(
-                "State-specific nuclear gradients for SA-CASSCF require CP-MCSCF Z-vector response equations (Phase 2)."
-            )
-        if callable(getattr(self, '_state_average_nuc_grad_method', None)):
-            return self._state_average_nuc_grad_method(state=state)
-        elif hasattr(self, '_base_class') and hasattr(self._base_class, 'nuc_grad_method'):
-            return self._base_class.nuc_grad_method(self)
-        else:
-            raise NotImplementedError("State-average nuclear gradient method is not implemented")
+        from gpu4pyscf.grad import sacasscf as sacasscf_grad
+        return sacasscf_grad.Gradients(self, state=state)
 
     Gradients = nuc_grad_method
 
-    def nac_method(self, state=None):
-        if callable(getattr(self, '_state_average_nac_method', None)):
-            return self._state_average_nac_method(state=state)
-        else:
-            raise NotImplementedError("State-average NAC method is not implemented")
+    def nac_method(self, state=(0, 1), use_etfs=True, mult_ediff=False):
+        from gpu4pyscf.nac import sacasscf as sacasscf_nac
+        return sacasscf_nac.NonAdiabaticCoupling(
+            self, state=state, use_etfs=use_etfs, mult_ediff=mult_ediff
+        )
 
     NACs = nac_method
+    NACGradients = nac_method
+
 
 
 def _state_average_mcscf_solver(casscf, fcisolver):
