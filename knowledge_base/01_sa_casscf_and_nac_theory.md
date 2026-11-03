@@ -125,10 +125,29 @@ Notice this term is proportional to the **anti-symmetric** transition density ma
 
 #### 3. Orbital & CI Response Term ($\mathbf{d}_{IJ}^{\text{response}}$)
 Similar to state gradients, the off-diagonal transition Hamiltonian is not stationary with respect to state-averaged orbital rotations. The transition orbital gradient is:
-$$L_{pq}^{IJ} = \langle \Psi_I | [\hat{E}_{pq} - \hat{E}_{qp}, \hat{H}] | \Psi_J \rangle$$
+$$L_{pq}^{IJ} = \langle \Psi_I | [\hat{E}_{pq} - \hat{E}_{qp}, \hat{H}] | \Psi_J \rangle = 2 (F_{pq}^{IJ} - F_{qp}^{IJ})$$
 We solve the Z-vector CP-MCSCF equation for the transition Lagrange multipliers $\mathbf{z}^{IJ}$:
 $$\mathbf{A}^{\text{SA}} \mathbf{z}^{IJ} = -\mathbf{L}^{IJ}$$
 and contract $\mathbf{z}^{IJ}$ with the standard derivative integral operators.
+
+### 5.4 The Transition Generalized Fock Matrix ($F^{IJ}$) vs Single-State Fock ($F^I$)
+A critical distinction in multireference response theory:
+- **Single-State / State-Averaged Fock Matrix ($F^I, F^{\text{SA}}$):**
+  Evaluates state expectation values $\langle \Psi_I | \hat{H} | \Psi_I \rangle$. The core electrons are doubly occupied ($D_{ii} = 2$), contributing non-zero diagonal core Fock elements $F_{ii} = 2 \epsilon_i$ and core-core Coulomb/exchange repulsion.
+- **Transition Generalized Fock Matrix ($F^{IJ}$, $I \ne J$):**
+  Evaluates off-diagonal matrix elements $\langle \Psi_I | \hat{H} | \Psi_J \rangle$. Because states are orthogonal ($\langle \Psi_I | \Psi_J \rangle = 0$), the core transition density is identically zero ($D_{\text{core}}^{IJ} = 0$).
+  All terms in $F^{IJ}$ are strictly linear in active transition RDMs ($\gamma^{IJ}, \Gamma^{IJ}$):
+  $$F_{pi}^{IJ} = 2 \left( \mathbf{C}^T [2 J(D_{\text{trans}}) - K(D_{\text{trans}})] \mathbf{C}_{\text{core}} \right)_{pi}$$
+  $$F_{pt}^{IJ} = \left( \mathbf{C}^T F^{\text{core}} \mathbf{C}_{\text{act}} \gamma^{IJ} \right)_{pt} + \sum_{uvw} (pv|uw) \Gamma_{tuvw}^{IJ}$$
+  Consequently, if $\gamma^{IJ} = 0$ and $\Gamma^{IJ} = 0$, $F^{IJ} \equiv 0$ and $L^{IJ} \equiv 0$.
+
+### 5.5 Spin Selection Rules in Non-Adiabatic Couplings
+The nuclear derivative operator $\nabla_{\mathbf{R}}$ does not act on spin coordinates:
+$$[\nabla_{\mathbf{R}}, \hat{S}^2] = 0, \quad [\nabla_{\mathbf{R}}, \hat{S}_z] = 0$$
+Therefore, in non-relativistic quantum mechanics without spin-orbit coupling:
+$$\langle \Psi_{S} | \nabla_{\mathbf{R}} | \Psi_{T} \rangle \equiv \mathbf{0} \quad (\Delta S \ne 0 \text{ selection rule})$$
+Transitions between Singlet and Triplet manifolds (such as $S_0 \to T_1$ and $S_0 \to T_2$) have identically zero transition RDMs ($\gamma^{ST} = 0$, $\Gamma^{ST} = 0$). Their non-adiabatic coupling vectors vanish identically ($\mathbf{d}_{ST} = \mathbf{0}$). Inter-system crossings in NAMD require spin-orbit coupling (SOC) matrix elements rather than non-adiabatic derivative couplings.
+
 
 ---
 

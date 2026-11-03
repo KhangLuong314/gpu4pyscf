@@ -34,7 +34,7 @@ from gpu4pyscf.df import int3c2e
 from gpu4pyscf.df.grad import rhf as df_rhf_grad
 from gpu4pyscf.fci import direct_spin1 as gpu_direct_spin1
 
-__all__ = ['Gradients', 'as_scanner']
+__all__ = ['Gradients', 'as_scanner', 'make_general_fock', 'make_transition_fock', 'get_orbital_gradient', '_to_cupy', '_to_numpy']
 
 
 def _to_cupy(arr, dtype=cp.float64):
@@ -153,6 +153,69 @@ def make_general_fock(mc, mo_coeff, casdm1, casdm2, eris=None):
     return fock
 
 
+def make_transition_fock(mc, mo_coeff, trans_d1, trans_d2):
+    """
+    Construct the Transition Generalized Fock Matrix for states I != J on GPU:
+    F^{IJ}_{pq} = sum_r h_{pr} D^{IJ}_{qr} + sum_{rst} (pr|st) d^{IJ}_{qrst}
+
+    For I != J, states are orthogonal (<Psi_I|Psi_J> = 0), so core transition
+    density is identically zero. All terms are strictly linear in trans_d1 and trans_d2.
+    If trans_d1 and trans_d2 are zero (e.g. spin-forbidden Singlet-Triplet), F^{IJ} == 0.
+    """
+    ncore = mc.ncore
+    ncas = mc.ncas
+    nocc = ncore + ncas
+    nmo = mo_coeff.shape[1]
+
+    mo_coeff = _to_cupy(mo_coeff)
+    trans_d1 = _to_cupy(trans_d1)
+    trans_d2 = _to_cupy(trans_d2)
+
+    # Fast exit for spin-forbidden or symmetry-forbidden transitions
+    if cp.linalg.norm(trans_d1) < 1e-10 and cp.linalg.norm(trans_d2) < 1e-10:
+        return cp.zeros((nmo, nmo), dtype=cp.float64)
+
+    c_core = mo_coeff[:, :ncore]
+    c_act = mo_coeff[:, ncore:nocc]
+
+    # Active transition density in AO basis
+    dm_trans_ao = c_act @ trans_d1 @ c_act.T
+
+    # Core 1-electron Hamiltonian and core J/K potentials
+    hcore_ao = _to_cupy(mc.get_hcore())
+    dm_core = 2.0 * (c_core @ c_core.T)
+    vj_core, vk_core = mc._scf.get_jk(dm=dm_core)
+    f_core_ao = hcore_ao + 2.0 * _to_cupy(vj_core) - _to_cupy(vk_core)
+
+    fock = cp.zeros((nmo, nmo), dtype=cp.float64)
+
+    # 1. Core blocks: interaction of core with active transition density
+    # F^{IJ}_{pi} = sum_t [ 2 (pi|tu) - (pu|ti) ] D^{IJ}_{ut}
+    vj_trans, vk_trans = mc._scf.get_jk(dm=dm_trans_ao)
+    f_trans_ao = 2.0 * _to_cupy(vj_trans) - _to_cupy(vk_trans)
+    fock[:, :ncore] = 2.0 * (mo_coeff.T @ f_trans_ao @ c_core)
+
+    # 2. Active blocks: 1-electron term from core Fock operator
+    # F^{IJ}_{pt} = sum_u F^core_{pu} D^{IJ}_{tu}
+    fock_act_1e = (mo_coeff.T @ f_core_ao @ c_act) @ trans_d1
+    fock[:, ncore:nocc] += fock_act_1e
+
+    # 3. Active blocks: 2-electron term from active transition 2-RDM
+    # F^{IJ, 2e}_{pt} = sum_{uvw} (pv|uw) d^{IJ}_{tuvw}
+    if hasattr(mc, 'with_df') and mc.with_df is not None:
+        try:
+            b_pa = mc.with_df.ao2mo(mo_coeff, (0, nmo, ncore, nocc))
+            if b_pa is not None:
+                b_pa = _to_cupy(b_pa)  # shape (naux, nmo, ncas)
+                w_pa = cp.einsum('Puw,tuvw->Ptv', b_pa[:, ncore:nocc, :], trans_d2)
+                f_2e = cp.einsum('Ppv,Ptv->pt', b_pa, w_pa)
+                fock[:, ncore:nocc] += f_2e
+        except Exception:
+            pass
+
+    return fock
+
+
 def get_orbital_gradient(fock, ncore, ncas, nmo):
     """
     Compute orbital gradient vector: g_{pq} = 2 * (F_{pq} - F_{qp})
@@ -228,7 +291,7 @@ def solve_cpmcscf(mc, mo_coeff, ci, state=None, tol=1e-7, max_cycle=50, verbose=
             trans_d1, trans_d2 = mc.fcisolver.trans_rdm12(
                 ci[root], ci[k], norb=ncas, nelec=mc.nelecas
             )
-            f_ik = make_general_fock(mc, mo_coeff, trans_d1, trans_d2)
+            f_ik = make_transition_fock(mc, mo_coeff, trans_d1, trans_d2)
             l_ca_ik, l_cv_ik, l_av_ik = get_orbital_gradient(f_ik, ncore, ncas, nmo)
 
             factor = 2.0 / de_ik
@@ -322,12 +385,11 @@ def grad_elec(sacasscf_grad, mo_coeff=None, ci=None, state=None, atmlst=None, ve
 
     # 4. Energy-weighted density matrix: W_eff
     fock = make_general_fock(mc, mo_coeff, casdm1, casdm2)
-    w_mo = 0.5 * (fock + fock.T)
+    w_mo = fock.copy()
     if cp.linalg.norm(z) > 1e-12:
         casdm1_sa, casdm2_sa = make_cas_dm12(mc, ci, state=None)
         fock_sa = make_general_fock(mc, mo_coeff, casdm1_sa, casdm2_sa)
-        w_resp = 0.5 * (fock_sa @ z + z @ fock_sa)
-        w_mo += w_resp
+        w_mo += z @ fock_sa
 
     w_ao = mo_coeff @ w_mo @ mo_coeff.T
 
@@ -337,11 +399,14 @@ def grad_elec(sacasscf_grad, mo_coeff=None, ci=None, state=None, atmlst=None, ve
     h1 = _to_cupy(mf_grad.get_hcore(mol))
     s1 = _to_cupy(mf_grad.get_ovlp(mol))
 
-    dh1e = rhf_grad.contract_h1e_dm(mol, h1, dm_tot, hermi=1)
-    ds = rhf_grad.contract_h1e_dm(mol, s1, w_ao, hermi=0)
+    dh1e = _to_numpy(rhf_grad.contract_h1e_dm(mol, h1, dm_tot, hermi=1))
+    ds = _to_numpy(rhf_grad.contract_h1e_dm(mol, s1, w_ao, hermi=0))
 
     # Nuclear attraction integral derivatives (1/r)
-    dh1e_nuc = int3c2e.get_dh1e(mol, dm_tot)
+    dh1e_nuc = _to_numpy(int3c2e.get_dh1e(mol, dm_tot))
+    if len(mol._ecpbas) > 0:
+        ecp_atoms = np.unique(mol._ecpbas[:, gto.ATOM_OF])
+        dh1e_nuc[ecp_atoms] += _to_numpy(rhf_grad.get_dh1e_ecp(mol, dm_tot))
 
     de_1e = dh1e + dh1e_nuc - ds
 
@@ -351,11 +416,11 @@ def grad_elec(sacasscf_grad, mo_coeff=None, ci=None, state=None, atmlst=None, ve
     if hasattr(mc, 'with_df') and mc.with_df is not None:
         try:
             df_grad = df_rhf_grad.Gradients(mc._scf)
-            de_2e = df_grad.jk_energy_per_atom(dm=dm_tot, j_factor=1.0, k_factor=0.5, hermi=1)
+            de_2e = _to_numpy(df_grad.jk_energy_per_atom(dm=dm_tot, j_factor=1.0, k_factor=0.5, hermi=1))
         except Exception as e:
             log.warn('GPU DF 2-electron gradient fallback: %s', e)
             try:
-                de_2e = mf_grad.jk_energy_per_atom(dm_tot, j_factor=1.0, k_factor=0.5, hermi=1)
+                de_2e = _to_numpy(mf_grad.jk_energy_per_atom(dm_tot, j_factor=1.0, k_factor=0.5, hermi=1))
             except Exception:
                 pass
 
@@ -387,7 +452,7 @@ class Gradients(rhf_grad.GradientsBase):
             atmlst = range(self.mol.natm)
 
         de = self.grad_elec(mo_coeff=mo_coeff, ci=ci, atmlst=atmlst)
-        self.de = de + self.grad_nuc(atmlst=atmlst)
+        self.de = _to_numpy(de) + _to_numpy(self.grad_nuc(atmlst=atmlst))
 
         if self.mol.symmetry:
             self.de = self.symmetrize(self.de, atmlst=atmlst)

@@ -32,7 +32,7 @@ from pyscf import lib, gto
 from gpu4pyscf.lib import logger
 from gpu4pyscf.grad import rhf as rhf_grad
 from gpu4pyscf.df import int3c2e
-from gpu4pyscf.grad.sacasscf import make_general_fock, get_orbital_gradient, _to_cupy, _to_numpy
+from gpu4pyscf.grad.sacasscf import make_general_fock, make_transition_fock, get_orbital_gradient, _to_cupy, _to_numpy
 
 __all__ = ['NonAdiabaticCoupling', 'NonAdiabaticCouplings', 'as_scanner']
 
@@ -121,6 +121,15 @@ class NonAdiabaticCoupling(lib.StreamObject):
         trans_d1 = _to_cupy(trans_d1)
         trans_d2 = _to_cupy(trans_d2)
 
+        # Check for spin-forbidden or symmetry-forbidden transitions (<Psi_I|Psi_J> = 0)
+        norm_td1 = float(cp.linalg.norm(trans_d1))
+        norm_td2 = float(cp.linalg.norm(trans_d2))
+        if norm_td1 < 1e-10 and norm_td2 < 1e-10:
+            log.info('Transition RDMs for pair (%d, %d) vanish identically (spin-forbidden / symmetry). NACV is zero.',
+                     root_i, root_j)
+            self.de = np.zeros((mol.natm, 3))
+            return self.de[atmlst]
+
         # 3. Active Hellmann-Feynman term:
         # Core orbitals are orthogonal between different CI roots, so core transition density is zero:
         # D_trans^{AO} = C_act @ trans_d1 @ C_act^T
@@ -133,8 +142,11 @@ class NonAdiabaticCoupling(lib.StreamObject):
         s1 = _to_cupy(mf_grad.get_ovlp(mol))
 
         # Active 1-electron force (hermi=0 since transition density is not Hermitian)
-        dh1e_act = rhf_grad.contract_h1e_dm(mol, h1, dm_trans_ao, hermi=0)
-        dh1e_nuc = int3c2e.get_dh1e(mol, dm_trans_ao)
+        dh1e_act = _to_numpy(rhf_grad.contract_h1e_dm(mol, h1, dm_trans_ao, hermi=0))
+        dh1e_nuc = _to_numpy(int3c2e.get_dh1e(mol, dm_trans_ao))
+        if len(mol._ecpbas) > 0:
+            ecp_atoms = np.unique(mol._ecpbas[:, gto.ATOM_OF])
+            dh1e_nuc[ecp_atoms] += _to_numpy(rhf_grad.get_dh1e_ecp(mol, dm_trans_ao))
         f_act_1e = dh1e_act + dh1e_nuc
 
         # 4. CSF derivative term (basis overlap derivative):
@@ -143,7 +155,7 @@ class NonAdiabaticCoupling(lib.StreamObject):
         if not self.use_etfs:
             gamma_anti = 0.5 * (trans_d1 - trans_d1.T)
             dm_csf_ao = c_act @ gamma_anti @ c_act.T
-            f_csf = -0.5 * rhf_grad.contract_h1e_dm(mol, s1, dm_csf_ao, hermi=0)
+            f_csf = -0.5 * _to_numpy(rhf_grad.contract_h1e_dm(mol, s1, dm_csf_ao, hermi=0))
             log.debug('CSF basis derivative norm: %.6e', np.linalg.norm(f_csf))
         else:
             log.debug('ETFs active: CSF basis derivative term cancelled.')
@@ -151,7 +163,7 @@ class NonAdiabaticCoupling(lib.StreamObject):
         # 5. Orbital response term:
         # Solve A^{SA} z^{IJ} = b^{IJ} where b^{IJ} = - 1 / (E_J - E_I) * L^{IJ}
         # with L^{IJ} = 2 * (F^{IJ} - (F^{IJ})^T)
-        fock_ij = make_general_fock(mc, mo_coeff, trans_d1, trans_d2)
+        fock_ij = make_transition_fock(mc, mo_coeff, trans_d1, trans_d2)
         l_ca, l_cv, l_av = get_orbital_gradient(fock_ij, ncore, ncas, nmo)
 
         scale = -1.0 / de_ji if abs(de_ji) > 1e-12 else 0.0
@@ -193,10 +205,13 @@ class NonAdiabaticCoupling(lib.StreamObject):
         delta_d_mo = 0.5 * (z_resp @ d_sa_mo - d_sa_mo @ z_resp)
         dm_resp_ao = mo_coeff @ delta_d_mo @ mo_coeff.T
 
-        dh1e_resp = rhf_grad.contract_h1e_dm(mol, h1, dm_resp_ao, hermi=1) + int3c2e.get_dh1e(mol, dm_resp_ao)
+        dh1e_resp = _to_numpy(rhf_grad.contract_h1e_dm(mol, h1, dm_resp_ao, hermi=1)) + _to_numpy(int3c2e.get_dh1e(mol, dm_resp_ao))
+        if len(mol._ecpbas) > 0:
+            ecp_atoms = np.unique(mol._ecpbas[:, gto.ATOM_OF])
+            dh1e_resp[ecp_atoms] += _to_numpy(rhf_grad.get_dh1e_ecp(mol, dm_resp_ao))
         w_resp_mo = 0.5 * (fock_sa @ z_resp + z_resp @ fock_sa)
         w_resp_ao = mo_coeff @ w_resp_mo @ mo_coeff.T
-        ds_resp = rhf_grad.contract_h1e_dm(mol, s1, w_resp_ao, hermi=0)
+        ds_resp = _to_numpy(rhf_grad.contract_h1e_dm(mol, s1, w_resp_ao, hermi=0))
 
         f_resp = dh1e_resp - ds_resp
 
@@ -207,11 +222,11 @@ class NonAdiabaticCoupling(lib.StreamObject):
 
         if self.mult_ediff:
             # Return h_IJ = ΔE * d_IJ
-            self.de = d_ij * de_ji
+            self.de = _to_numpy(d_ij * de_ji)
             log.info('Final scaled coupling h_IJ = ΔE * d_IJ Frobenius norm: %.6e',
                      np.linalg.norm(self.de))
         else:
-            self.de = d_ij
+            self.de = _to_numpy(d_ij)
             log.info('Final Non-Adiabatic Coupling Vector d_IJ Frobenius norm: %.6e Bohr^-1',
                      np.linalg.norm(self.de))
 
